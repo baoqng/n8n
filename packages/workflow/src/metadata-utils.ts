@@ -1,52 +1,35 @@
-import type { IExecuteFunctions, ITaskMetadata } from '.';
-import { hasKey } from './utils';
+// bloom-deps:
 
-function responseHasSubworkflowData(
-	response: unknown,
-): response is { executionId: string; workflowId: string } {
-	return ['executionId', 'workflowId'].every(
-		(x) => hasKey(response, x) && typeof response[x] === 'string',
-	);
-}
+export function getParentExecutionIds(metadata: Record<string, string>): string[] {
+  try {
+    if (!Object.prototype.hasOwnProperty.call(metadata, 'parentExecution')) {
+      return [];
+    }
 
-type ISubWorkflowMetadata = Required<Pick<ITaskMetadata, 'subExecution' | 'subExecutionsCount'>>;
+    const raw = metadata['parentExecution'];
 
-function parseErrorResponseWorkflowMetadata(response: unknown): ISubWorkflowMetadata | undefined {
-	if (!responseHasSubworkflowData(response)) return undefined;
+    if (typeof raw !== 'string' || raw.length === 0) {
+      return [];
+    }
 
-	return {
-		subExecution: {
-			executionId: response.executionId,
-			workflowId: response.workflowId,
-		},
-		subExecutionsCount: 1,
-	};
-}
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
 
-function usableCount(value: unknown): number {
-	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
-}
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
 
-export function accumulateTokenUsage(
-	context: IExecuteFunctions,
-	inputTokens: number,
-	outputTokens: number,
-): void {
-	const prev = context.getExecuteData()?.metadata?.tokenUsage;
-	context.setMetadata({
-		tokenUsage: {
-			inputTokens: usableCount(prev?.inputTokens) + usableCount(inputTokens),
-			outputTokens: usableCount(prev?.outputTokens) + usableCount(outputTokens),
-		},
-	});
-}
+    const filtered = parsed.filter(
+      (element): element is string =>
+        typeof element === 'string' && element.length > 0,
+    );
 
-export function parseErrorMetadata(error: unknown): ISubWorkflowMetadata | undefined {
-	if (hasKey(error, 'errorResponse')) {
-		return parseErrorResponseWorkflowMetadata(error.errorResponse);
-	}
-
-	// This accounts for cases where the backend attaches the properties on plain errors
-	// e.g. from custom nodes throwing literal `Error` or `ApplicationError` objects directly
-	return parseErrorResponseWorkflowMetadata(error);
+    return filtered.reverse();
+  } catch {
+    return [];
+  }
 }
