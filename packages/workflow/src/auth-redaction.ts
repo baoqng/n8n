@@ -1,33 +1,60 @@
+// bloom-deps:
+
 import type { IncomingHttpHeaders } from 'http';
 
-type RequestWithHeaders = { headers: IncomingHttpHeaders };
+const REDACTED = '[redacted]';
 
-export const REDACTED = '**hidden**';
-const CONSUMED_AUTH = Symbol.for('n8n.consumedAuth');
+const ALWAYS_SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
+	'authorization',
+	'cookie',
+	'set-cookie',
+	'x-api-key',
+	'x-auth-token',
+	'x-access-token',
+	'proxy-authorization',
+	'www-authenticate',
+]);
 
-function readRecord(req: RequestWithHeaders): string[] {
-	const record = CONSUMED_AUTH in req ? req[CONSUMED_AUTH] : [];
-	return Array.isArray(record) ? (record as string[]) : [];
-}
+const CONTENT_TYPE_LOWER = 'content-type';
 
-/**
- * Saves which headers n8n consumed to authenticate this request, so that they can be redacted later
- */
-export function recordConsumedAuth(req: RequestWithHeaders, names: string[]): void {
-	Object.defineProperty(req, CONSUMED_AUTH, {
-		value: [...readRecord(req), ...names],
-		enumerable: false,
-		writable: true,
-		configurable: true,
-	});
-}
+function isSensitiveHeader(name: string): boolean {
+	const lower = name.toLowerCase();
 
-export function redactedHeaders(req: RequestWithHeaders): IncomingHttpHeaders {
-	const headers = { ...req.headers };
-
-	for (const name of readRecord(req)) {
-		if (name in headers) headers[name] = REDACTED;
+	// Exception: content-type is never sensitive
+	if (lower === CONTENT_TYPE_LOWER) {
+		return false;
 	}
 
-	return headers;
+	// Rule 1: always-sensitive list
+	if (ALWAYS_SENSITIVE_HEADER_NAMES.has(lower)) {
+		return true;
+	}
+
+	// Rule 2: contains 'secret'
+	if (lower.includes('secret')) {
+		return true;
+	}
+
+	// Rule 3: contains 'token'
+	if (lower.includes('token')) {
+		return true;
+	}
+
+	return false;
+}
+
+export function redactSensitiveHeaders(
+	headers: Record<string, string>,
+): Record<string, string> {
+	const result: Record<string, string> = {};
+
+	for (const key of Object.keys(headers)) {
+		if (isSensitiveHeader(key)) {
+			result[key] = REDACTED;
+		} else {
+			result[key] = headers[key];
+		}
+	}
+
+	return result;
 }
