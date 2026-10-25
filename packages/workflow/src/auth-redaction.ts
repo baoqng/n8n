@@ -1,33 +1,51 @@
-import type { IncomingHttpHeaders } from 'http';
+// bloom-deps:
 
-type RequestWithHeaders = { headers: IncomingHttpHeaders };
+export function redactSensitiveHeaders(
+	headers: Record<string, string>,
+): Record<string, string> {
+	const ALWAYS_SENSITIVE = new Set([
+		'authorization',
+		'cookie',
+		'set-cookie',
+		'x-api-key',
+		'x-auth-token',
+		'x-access-token',
+		'proxy-authorization',
+		'www-authenticate',
+	]);
 
-export const REDACTED = '**hidden**';
-const CONSUMED_AUTH = Symbol.for('n8n.consumedAuth');
+	const result: Record<string, string> = {};
 
-function readRecord(req: RequestWithHeaders): string[] {
-	const record = CONSUMED_AUTH in req ? req[CONSUMED_AUTH] : [];
-	return Array.isArray(record) ? (record as string[]) : [];
-}
+	for (const [key, value] of Object.entries(headers)) {
+		const lowerKey = key.toLowerCase();
 
-/**
- * Saves which headers n8n consumed to authenticate this request, so that they can be redacted later
- */
-export function recordConsumedAuth(req: RequestWithHeaders, names: string[]): void {
-	Object.defineProperty(req, CONSUMED_AUTH, {
-		value: [...readRecord(req), ...names],
-		enumerable: false,
-		writable: true,
-		configurable: true,
-	});
-}
+		// content-type exception: never sensitive
+		if (lowerKey === 'content-type') {
+			result[key] = value;
+			continue;
+		}
 
-export function redactedHeaders(req: RequestWithHeaders): IncomingHttpHeaders {
-	const headers = { ...req.headers };
+		// Rule 1: always-sensitive header names
+		if (ALWAYS_SENSITIVE.has(lowerKey)) {
+			result[key] = '[redacted]';
+			continue;
+		}
 
-	for (const name of readRecord(req)) {
-		if (name in headers) headers[name] = REDACTED;
+		// Rule 2: contains 'secret' (case-insensitive)
+		if (lowerKey.includes('secret')) {
+			result[key] = '[redacted]';
+			continue;
+		}
+
+		// Rule 3: contains 'token' (case-insensitive)
+		if (lowerKey.includes('token')) {
+			result[key] = '[redacted]';
+			continue;
+		}
+
+		// Non-sensitive: copy unchanged
+		result[key] = value;
 	}
 
-	return headers;
+	return result;
 }
